@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/juju/persistent-cookiejar"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -25,11 +26,17 @@ type EDClient struct {
 	// The HTTP client to use for making requests.
 	Client http.Client
 
+	// The persistent cookiejar for holding auth details.  Also present at
+	// Client.Jar (but as a http.CookieJar)
+	Jar *cookiejar.Jar
+
 	// A function to receive every HTTP request and response for debugging.
 	HTTPDebugger func(what string, res http.Response)
 }
 
 func NewEDClient() (EDClient, error) {
+	var err error
+
 	client := EDClient{
 		Base: DefaultBase,
 
@@ -44,6 +51,12 @@ func NewEDClient() (EDClient, error) {
 	if basePresent {
 		client.Base = base
 	}
+
+	client.Jar, err = OpenCookieJar("")
+	if err != nil {
+		return client, err
+	}
+	client.Client.Jar = client.Jar
 
 	return client, nil
 }
@@ -105,5 +118,26 @@ func (c *EDClient) Login(email string, password string) error {
 	if len(body) != 0 {
 		fmt.Printf("Login response body: %s\n", body)
 	}
+
+	// The returned cookie has no persistence or maxage parameter.  Hack one.
+	// Also set secure to true.
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == "CompanionApp" {
+			if cookie.MaxAge == 0 && cookie.Expires.IsZero() {
+				fmt.Printf("cookie has no expiration, setting one")
+				cookie.Expires = time.Now().Add(3600 * time.Second)
+			}
+			cookie.Secure = true
+			c.Jar.SetCookies(req.URL, []*http.Cookie{cookie})
+		}
+	}
+
+	if res.StatusCode == 200 {
+		err = c.Jar.Save()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
