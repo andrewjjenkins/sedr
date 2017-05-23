@@ -1,9 +1,9 @@
 package main
 
 import (
-	"client"
 	"errors"
 	"fmt"
+	"github.com/andrewjjenkins/sedr/client"
 	"os"
 )
 
