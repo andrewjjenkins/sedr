@@ -19,17 +19,23 @@ func getLoginCredentials() (email string, password string, err error) {
 }
 
 func main() {
-	fmt.Println("Hello world")
 	c, err := client.NewEDClient()
 	if err != nil {
 		panic(err)
 	}
 
-	email, password, err := getLoginCredentials()
-	if err != nil {
-		panic(err)
+	if c.NeedLogin() {
+		email, password, err := getLoginCredentials()
+		if err != nil {
+			panic(err)
+		}
+		err = c.Login(email, password)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		fmt.Printf("Using stored cookie\n")
 	}
-	err = c.Login(email, password)
 	if err != nil {
 		panic(err)
 	}

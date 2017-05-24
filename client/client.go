@@ -131,3 +131,17 @@ func (c *EDClient) Login(email string, password string) error {
 
 	return nil
 }
+
+func (c *EDClient) NeedLogin() bool {
+	url := c.Base + DefaultLogin
+
+	parsedUrl, err := urlpackage.Parse(url)
+	if err != nil {
+		return true
+	}
+	if len(c.Jar.Cookies(parsedUrl)) != 0 {
+		return false
+	} else {
+		return true
+	}
+}
