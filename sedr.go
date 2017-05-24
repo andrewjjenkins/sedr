@@ -39,6 +39,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		c.SaveJar()
 	} else {
 		fmt.Printf("Using stored cookie\n")
 	}

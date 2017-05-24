@@ -1,10 +1,10 @@
 package client
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/juju/persistent-cookiejar"
-	"io/ioutil"
 	"net/http"
 	urlpackage "net/url"
 	"os"
@@ -38,53 +38,49 @@ type EDClient struct {
 	HTTPDebugger func(what string, res http.Response)
 }
 
-type LoginRedirectToVerifyError struct {
-	s string
-}
-
-// Most redirections are not allowed but we signal a few with special errors
+// Most redirections are allowed but we signal a few with special errors
 // to make the authentication workflow correct.
 func checkRedirect(req *http.Request, via []*http.Request) error {
-	fmt.Printf("asked to redirect: %s ||", req.URL)
-	for _, viaReq := range via {
-		fmt.Printf(" %s", viaReq.URL)
-	}
-	fmt.Printf("\n")
-	fmt.Printf("Response headers:\n")
-	if req.Response != nil {
-		for name, val := range req.Response.Header {
-			fmt.Printf("  %s: %s\n", name, val)
+	/*
+		fmt.Printf("asked to redirect: %s ||", req.URL)
+		for _, viaReq := range via {
+			fmt.Printf(" %s", viaReq.URL)
 		}
-	} else {
-		fmt.Printf("Response is nil\n")
-	}
-	for i, viaEntry := range via {
-		fmt.Printf("Via %d response headers:\n", i)
-		if viaEntry.Response != nil {
-			for name, val := range viaEntry.Response.Header {
+		fmt.Printf("\n")
+		fmt.Printf("Response headers:\n")
+		if req.Response != nil {
+			for name, val := range req.Response.Header {
 				fmt.Printf("  %s: %s\n", name, val)
 			}
 		} else {
 			fmt.Printf("Response is nil\n")
 		}
-	}
+		for i, viaEntry := range via {
+			fmt.Printf("Via %d response headers:\n", i)
+			if viaEntry.Response != nil {
+				for name, val := range viaEntry.Response.Header {
+					fmt.Printf("  %s: %s\n", name, val)
+				}
+			} else {
+				fmt.Printf("Response is nil\n")
+			}
+		}
+	*/
 
 	if req.URL.EscapedPath() == DefaultVerify &&
 		len(via) == 1 &&
 		via[0].URL.EscapedPath() == DefaultLogin {
+		// We just tried to login with user/pass.  It was accepted: we were redirected
+		// to the token-verify page.
 		return http.ErrUseLastResponse
 	} else if req.URL.EscapedPath() == DefaultRoot &&
 		len(via) == 1 &&
 		via[0].URL.EscapedPath() == DefaultVerify {
+		// We just tried to verify the token.  It was accepted: we were redirected to /
 		return http.ErrUseLastResponse
-	} else {
-		fmt.Printf("Didn't get login redirect right")
-		fmt.Printf("%s %s\n", req.URL.EscapedPath(), DefaultVerify)
-		fmt.Printf("%d\n", len(via))
-		fmt.Printf("%s %s\n", via[0].URL.EscapedPath(), DefaultLogin)
 	}
 
-	return errors.New("No redirect")
+	return nil
 }
 
 func NewEDClient() (EDClient, error) {
@@ -139,7 +135,7 @@ func callHttpDebugger(c *EDClient, what string, res http.Response) {
 	}
 }
 
-func (c *EDClient) postForm(path string, formVals *urlpackage.Values) (*http.Response,
+func (c *EDClient) PostForm(path string, formVals *urlpackage.Values) (*http.Response,
 	error) {
 	url := c.Base + path
 
@@ -154,24 +150,54 @@ func (c *EDClient) postForm(path string, formVals *urlpackage.Values) (*http.Res
 	return res, nil
 }
 
-func (c *EDClient) tweakCompanionAppTokenAndSave(res *http.Response) error {
+func (c *EDClient) Get(path string) (*http.Response, error) {
+	url := c.Base + path
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("user-agent", DefaultUA)
+
+	res, err := c.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	callHttpDebugger(c, "Get "+path, *res)
+	return res, nil
+}
+
+func (c *EDClient) GetJSON(path string, out interface{}) error {
+	res, err := c.Get(path)
+	if err != nil {
+		return err
+	}
+
+	contentType := res.Header.Get("content-type")
+	if contentType != "application/json" {
+		return errors.New("GetJSON for " + path + " got content-type " +
+			contentType)
+	}
+
+	return json.NewDecoder(res.Body).Decode(out)
+}
+
+func (c *EDClient) tweakCompanionAppCookie(res *http.Response) {
 	// The returned cookie has no persistence or maxage parameter.  Hack one.
 	// Also set secure to true.
 	for _, cookie := range res.Cookies() {
 		if cookie.Name == "CompanionApp" {
 			if cookie.MaxAge == 0 && cookie.Expires.IsZero() {
 				fmt.Printf("cookie has no expiration, setting one")
-				cookie.Expires = time.Now().Add(24 * 3600 * time.Second)
+
+				// I have no idea if the cookie is actually valid this long, but I know that
+				// I rarely have to reauthenticate any of my clients.
+				cookie.Expires = time.Now().Add(365 * 24 * 3600 * time.Second)
 			}
 			cookie.Secure = true
 			c.Jar.SetCookies(res.Request.URL, []*http.Cookie{cookie})
 		}
 	}
-
-	if res.StatusCode == 200 || res.StatusCode == 302 {
-		return c.Jar.Save()
-	}
-	return nil
 }
 
 func (c *EDClient) Login(email string, password string) error {
@@ -179,22 +205,12 @@ func (c *EDClient) Login(email string, password string) error {
 	bodyData.Set("email", email)
 	bodyData.Set("password", password)
 
-	res, err := c.postForm(DefaultLogin, &bodyData)
-	if err != nil {
-		fmt.Printf("Here2")
-		return err
-	}
-
-	fmt.Printf("Here")
-	body, err := ioutil.ReadAll(res.Body)
+	res, err := c.PostForm(DefaultLogin, &bodyData)
 	if err != nil {
 		return err
 	}
-	if len(body) != 0 {
-		fmt.Printf("Login response body: %s\n", body)
-	}
-
-	return c.tweakCompanionAppTokenAndSave(res)
+	c.tweakCompanionAppCookie(res)
+	return nil
 }
 
 func (c *EDClient) NeedLogin() bool {
@@ -215,20 +231,12 @@ func (c *EDClient) Verify(code string) error {
 	verifyData := urlpackage.Values{}
 	verifyData.Set("code", code)
 
-	res, err := c.postForm(DefaultVerify, &verifyData)
+	res, err := c.PostForm(DefaultVerify, &verifyData)
 	if err != nil {
 		return err
 	}
-
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return err
-	}
-	if len(body) != 0 {
-		fmt.Printf("Login response body: %s\n", body)
-	}
-
-	return c.tweakCompanionAppTokenAndSave(res)
+	c.tweakCompanionAppCookie(res)
+	return nil
 }
 
 func (c *EDClient) VerifyKeyboard() error {
@@ -240,27 +248,10 @@ func (c *EDClient) VerifyKeyboard() error {
 }
 
 func (c *EDClient) GetProfile() error {
-	url := c.Base + DefaultProfile
+	var profile Profile
+	return c.GetJSON(DefaultProfile, profile)
+}
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("user-agent", DefaultUA)
-
-	res, err := c.Client.Do(req)
-	if err != nil {
-		return err
-	}
-	callHttpDebugger(c, "GetProfile", *res)
-
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return err
-	}
-	if len(body) != 0 {
-		fmt.Printf("GetProfile response body: %s\n", body)
-	}
-
-	return nil
+func (c *EDClient) SaveJar() error {
+	return c.Jar.Save()
 }
