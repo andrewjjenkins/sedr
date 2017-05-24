@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/stretchr/testify/assert"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -117,4 +118,50 @@ func TestParseProfile(t *testing.T) {
 		MarketId:           "",
 	}
 	assert.Equal(t, expectedCommodity, profile.LastStarport.Commodities[0])
+}
+
+func TestUnmarshalStringFloat(t *testing.T) {
+	type TestStringFloat struct {
+		MyFloat StringFloat `json:"stringfloat"`
+	}
+
+	const floatJson string = "{ \"stringfloat\": 1.234 }"
+	var parsedFloatJson TestStringFloat
+	err := json.NewDecoder(strings.NewReader(floatJson)).Decode(&parsedFloatJson)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 1.234, parsedFloatJson.MyFloat)
+
+	const stringJson string = "{ \"stringfloat\": \"2.234\" }"
+	var parsedStringJson TestStringFloat
+	err = json.NewDecoder(strings.NewReader(stringJson)).Decode(&parsedStringJson)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 2.234, parsedStringJson.MyFloat)
+
+	const notValidFloat string = "{ \"stringfloat\": \"2.twentythree4\" }"
+	var parsedNotValidFloat TestStringFloat
+	err = json.NewDecoder(strings.NewReader(notValidFloat)).Decode(&parsedNotValidFloat)
+	assert.Error(t, err)
+}
+
+func TestUnmarshalStringInt(t *testing.T) {
+	type TestStringInt struct {
+		MyInt StringInt `json:"stringint"`
+	}
+
+	const intJson string = "{ \"stringint\": 14 }"
+	var parsedIntJson TestStringInt
+	err := json.NewDecoder(strings.NewReader(intJson)).Decode(&parsedIntJson)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 14, parsedIntJson.MyInt)
+
+	const stringJson string = "{ \"stringint\": \"224\" }"
+	var parsedStringJson TestStringInt
+	err = json.NewDecoder(strings.NewReader(stringJson)).Decode(&parsedStringJson)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 224, parsedStringJson.MyInt)
+
+	const notValidInt string = "{ \"stringint\": \"twentythree\" }"
+	var parsedNotValidInt TestStringInt
+	err = json.NewDecoder(strings.NewReader(notValidInt)).Decode(&parsedNotValidInt)
+	assert.Error(t, err)
 }
