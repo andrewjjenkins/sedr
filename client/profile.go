@@ -42,14 +42,16 @@ type ShipValue struct {
 	Total    int `json:"total"`
 }
 
+type Station struct {
+	Name string `json:"name"`
+	Id   int    `json:"id"`
+}
+
 type Ship struct {
-	Name    string `json:"name"`
-	Id      int    `json:"id"`
-	Free    bool   `json:"free"`
-	Station struct {
-		Name string `json:"name"`
-		Id   int    `json:"id"`
-	} `json:"station"`
+	Name       string     `json:"name"`
+	Id         int        `json:"id"`
+	Free       bool       `json:"free"`
+	Station    Station    `json:"station"`
 	Value      ShipValue  `json:"value"`
 	Starsystem Starsystem `json:"starsystem"`
 }
@@ -86,14 +88,11 @@ type CurrentShip struct {
 		Integrity int  `json:"integrity"`
 		Paintwork int  `json:"paintwork"`
 	}
-	Value           ShipValue `json:"value"`
-	Alive           bool      `json:"alive"`
-	CockpitBreached bool      `json:"cockpitBreached"`
-	Station         struct {
-		Name string `json:"name"`
-		Id   int    `json:"id"`
-	} `json:"station"`
-	Modules map[string]Module `json:"modules"`
+	Value           ShipValue         `json:"value"`
+	Alive           bool              `json:"alive"`
+	CockpitBreached bool              `json:"cockpitBreached"`
+	Station         Station           `json:"station"`
+	Modules         map[string]Module `json:"modules"`
 }
 
 type SaleModule struct {
@@ -180,7 +179,7 @@ type StringFloat float64
 
 func (x *StringFloat) UnmarshalJSON(value []byte) error {
 	trimmedValue := strings.Trim(string(value), "\"")
-	xx, err := strconv.ParseFloat(trimmedValue, 32)
+	xx, err := strconv.ParseFloat(trimmedValue, 64)
 	*x = StringFloat(xx)
 	return err
 }
