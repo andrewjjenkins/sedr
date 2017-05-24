@@ -1,13 +1,13 @@
 package client
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"github.com/juju/persistent-cookiejar"
 	"io/ioutil"
 	"net/http"
+	urlpackage "net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -84,25 +84,15 @@ func callHttpDebugger(c *EDClient, what string, res http.Response) {
 	}
 }
 
-type loginBody struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
 func (c *EDClient) Login(email string, password string) error {
 	url := c.Base + DefaultLogin
 
-	var bodyBuf bytes.Buffer
-	err := json.NewEncoder(&bodyBuf).Encode(&loginBody{email, password})
-	if err != nil {
-		return err
-	}
+	bodyData := urlpackage.Values{}
+	bodyData.Set("email", email)
+	bodyData.Set("password", password)
+	req, err := http.NewRequest("POST", url, strings.NewReader(bodyData.Encode()))
 
-	req, err := http.NewRequest("POST", url, &bodyBuf)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("content-type", "application/json")
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
 	req.Header.Set("user-agent", DefaultUA)
 
 	res, err := c.Client.Do(req)
