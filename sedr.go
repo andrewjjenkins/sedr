@@ -33,9 +33,17 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+
+		fmt.Printf("Doing verify:\n")
+		err = c.VerifyKeyboard()
+		if err != nil {
+			panic(err)
+		}
 	} else {
 		fmt.Printf("Using stored cookie\n")
 	}
+
+	err = c.GetProfile()
 	if err != nil {
 		panic(err)
 	}

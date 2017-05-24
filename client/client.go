@@ -1,6 +1,7 @@
 package client
 
 import (
+	"errors"
 	"fmt"
 	"github.com/juju/persistent-cookiejar"
 	"io/ioutil"
@@ -12,8 +13,11 @@ import (
 )
 
 const (
-	DefaultBase  = "https://companion.orerve.net"
-	DefaultLogin = "/user/login"
+	DefaultBase    = "https://companion.orerve.net"
+	DefaultLogin   = "/user/login"
+	DefaultVerify  = "/user/confirm"
+	DefaultRoot    = "/"
+	DefaultProfile = "/profile"
 
 	// The user agent must be set to a string that the E:D servers will accept.
 	DefaultUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 7_1_2 like Mac OS X) AppleWebKit/537.51.2 (KHTML, like Gecko) Mobile/11D257"
@@ -34,6 +38,55 @@ type EDClient struct {
 	HTTPDebugger func(what string, res http.Response)
 }
 
+type LoginRedirectToVerifyError struct {
+	s string
+}
+
+// Most redirections are not allowed but we signal a few with special errors
+// to make the authentication workflow correct.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	fmt.Printf("asked to redirect: %s ||", req.URL)
+	for _, viaReq := range via {
+		fmt.Printf(" %s", viaReq.URL)
+	}
+	fmt.Printf("\n")
+	fmt.Printf("Response headers:\n")
+	if req.Response != nil {
+		for name, val := range req.Response.Header {
+			fmt.Printf("  %s: %s\n", name, val)
+		}
+	} else {
+		fmt.Printf("Response is nil\n")
+	}
+	for i, viaEntry := range via {
+		fmt.Printf("Via %d response headers:\n", i)
+		if viaEntry.Response != nil {
+			for name, val := range viaEntry.Response.Header {
+				fmt.Printf("  %s: %s\n", name, val)
+			}
+		} else {
+			fmt.Printf("Response is nil\n")
+		}
+	}
+
+	if req.URL.EscapedPath() == DefaultVerify &&
+		len(via) == 1 &&
+		via[0].URL.EscapedPath() == DefaultLogin {
+		return http.ErrUseLastResponse
+	} else if req.URL.EscapedPath() == DefaultRoot &&
+		len(via) == 1 &&
+		via[0].URL.EscapedPath() == DefaultVerify {
+		return http.ErrUseLastResponse
+	} else {
+		fmt.Printf("Didn't get login redirect right")
+		fmt.Printf("%s %s\n", req.URL.EscapedPath(), DefaultVerify)
+		fmt.Printf("%d\n", len(via))
+		fmt.Printf("%s %s\n", via[0].URL.EscapedPath(), DefaultLogin)
+	}
+
+	return errors.New("No redirect")
+}
+
 func NewEDClient() (EDClient, error) {
 	var err error
 
@@ -42,6 +95,8 @@ func NewEDClient() (EDClient, error) {
 
 		Client: http.Client{
 			Timeout: time.Second * 10,
+
+			CheckRedirect: checkRedirect,
 		},
 
 		HTTPDebugger: dumpHttp,
@@ -84,23 +139,53 @@ func callHttpDebugger(c *EDClient, what string, res http.Response) {
 	}
 }
 
-func (c *EDClient) Login(email string, password string) error {
-	url := c.Base + DefaultLogin
+func (c *EDClient) postForm(path string, formVals *urlpackage.Values) (*http.Response,
+	error) {
+	url := c.Base + path
 
+	req, err := http.NewRequest("POST", url, strings.NewReader(formVals.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	req.Header.Set("user-agent", DefaultUA)
+	res, err := c.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	callHttpDebugger(c, "Posting to "+path, *res)
+	return res, nil
+}
+
+func (c *EDClient) tweakCompanionAppTokenAndSave(res *http.Response) error {
+	// The returned cookie has no persistence or maxage parameter.  Hack one.
+	// Also set secure to true.
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == "CompanionApp" {
+			if cookie.MaxAge == 0 && cookie.Expires.IsZero() {
+				fmt.Printf("cookie has no expiration, setting one")
+				cookie.Expires = time.Now().Add(24 * 3600 * time.Second)
+			}
+			cookie.Secure = true
+			c.Jar.SetCookies(res.Request.URL, []*http.Cookie{cookie})
+		}
+	}
+
+	if res.StatusCode == 200 || res.StatusCode == 302 {
+		return c.Jar.Save()
+	}
+	return nil
+}
+
+func (c *EDClient) Login(email string, password string) error {
 	bodyData := urlpackage.Values{}
 	bodyData.Set("email", email)
 	bodyData.Set("password", password)
-	req, err := http.NewRequest("POST", url, strings.NewReader(bodyData.Encode()))
 
-	req.Header.Set("content-type", "application/x-www-form-urlencoded")
-	req.Header.Set("user-agent", DefaultUA)
-
-	res, err := c.Client.Do(req)
+	res, err := c.postForm(DefaultLogin, &bodyData)
 	if err != nil {
+		fmt.Printf("Here2")
 		return err
 	}
-	callHttpDebugger(c, "Login", *res)
 
+	fmt.Printf("Here")
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return err
@@ -109,27 +194,7 @@ func (c *EDClient) Login(email string, password string) error {
 		fmt.Printf("Login response body: %s\n", body)
 	}
 
-	// The returned cookie has no persistence or maxage parameter.  Hack one.
-	// Also set secure to true.
-	for _, cookie := range res.Cookies() {
-		if cookie.Name == "CompanionApp" {
-			if cookie.MaxAge == 0 && cookie.Expires.IsZero() {
-				fmt.Printf("cookie has no expiration, setting one")
-				cookie.Expires = time.Now().Add(3600 * time.Second)
-			}
-			cookie.Secure = true
-			c.Jar.SetCookies(req.URL, []*http.Cookie{cookie})
-		}
-	}
-
-	if res.StatusCode == 200 {
-		err = c.Jar.Save()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return c.tweakCompanionAppTokenAndSave(res)
 }
 
 func (c *EDClient) NeedLogin() bool {
@@ -144,4 +209,58 @@ func (c *EDClient) NeedLogin() bool {
 	} else {
 		return true
 	}
+}
+
+func (c *EDClient) Verify(code string) error {
+	verifyData := urlpackage.Values{}
+	verifyData.Set("code", code)
+
+	res, err := c.postForm(DefaultVerify, &verifyData)
+	if err != nil {
+		return err
+	}
+
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+	if len(body) != 0 {
+		fmt.Printf("Login response body: %s\n", body)
+	}
+
+	return c.tweakCompanionAppTokenAndSave(res)
+}
+
+func (c *EDClient) VerifyKeyboard() error {
+	var code string
+	fmt.Print("Enter verification code from email: ")
+	fmt.Scanln(&code)
+
+	return c.Verify(code)
+}
+
+func (c *EDClient) GetProfile() error {
+	url := c.Base + DefaultProfile
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("user-agent", DefaultUA)
+
+	res, err := c.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	callHttpDebugger(c, "GetProfile", *res)
+
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+	if len(body) != 0 {
+		fmt.Printf("GetProfile response body: %s\n", body)
+	}
+
+	return nil
 }
