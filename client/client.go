@@ -247,11 +247,6 @@ func (c *EDClient) VerifyKeyboard() error {
 	return c.Verify(code)
 }
 
-func (c *EDClient) GetProfile() error {
-	var profile Profile
-	return c.GetJSON(DefaultProfile, profile)
-}
-
 func (c *EDClient) SaveJar() error {
 	return c.Jar.Save()
 }

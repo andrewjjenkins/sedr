@@ -44,8 +44,10 @@ func main() {
 		fmt.Printf("Using stored cookie\n")
 	}
 
-	err = c.GetProfile()
+	var profile client.Profile
+	err = c.GetProfile(&profile)
 	if err != nil {
 		panic(err)
 	}
+	fmt.Printf("Profile: %v", profile)
 }
